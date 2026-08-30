@@ -90,8 +90,9 @@ except Exception as e:
 # 3. 日時取得 ＆ Drive/Sheets送信関数
 # ==========================================
 def get_capture_time(image, is_camera):
+    jst = ZoneInfo("Asia/Tokyo")
     if is_camera:
-        return datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        return datetime.datetime.now(jst).strftime("%Y/%m/%d %H:%M:%S")
     try:
         exif = image._getexif()
         if exif is not None:
@@ -101,7 +102,7 @@ def get_capture_time(image, is_camera):
                     return value.replace(':', '/', 2)
     except Exception:
         pass
-    return datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    return "データなし"
 
 def upload_to_drive_and_sheets(image_array, team, capture_time, count):
     # SecretsからIDを確実に読み込む
@@ -277,11 +278,17 @@ file_img = st.file_uploader("または画像をアップロード", type=['jpg',
 image_source = camera_img if camera_img else file_img
 
 if image_source is not None:
+    # 新しい画像がセットされたときだけ撮影時間を取得し、記憶させる
+    if "current_file_id" not in st.session_state or st.session_state.current_file_id != image_source.file_id:
+        st.session_state.current_file_id = image_source.file_id
+        image = Image.open(image_source)
+        is_camera = (camera_img is not None)
+        st.session_state.capture_time = get_capture_time(image, is_camera)
+    
+    # 記憶しておいた時間を呼び出す
+    capture_time = st.session_state.capture_time
     image = Image.open(image_source)
     img_array = np.array(image)
-    
-    is_camera = (camera_img is not None)
-    capture_time = get_capture_time(image, is_camera)
     
     with st.spinner("AIが周回数とチーム番号を判定中..."):
         result_img, count_or_error, detected_team = process_image(img_array)
