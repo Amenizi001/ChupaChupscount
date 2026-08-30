@@ -3,3 +3,6 @@ opencv-python-headless
 numpy
 Pillow
 ultralytics
+gspread
+google-auth
+google-api-python-client
