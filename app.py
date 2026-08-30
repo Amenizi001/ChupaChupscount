@@ -4,16 +4,6 @@ import numpy as np
 from PIL import Image, ExifTags
 from ultralytics import YOLO
 import datetime
-import os
-import pandas as pd
-
-# ==========================================
-# 0. 保存先フォルダの設定
-# ==========================================
-# Google Driveがマウントされているパスを指定してください
-# 例: "/content/drive/MyDrive/ChupaChups_Project/result"
-RESULT_DIR = "result" 
-
 
 # ==========================================
 # 1. ページ設定とモデルの読み込み
@@ -27,67 +17,31 @@ def load_model():
 try:
     model = load_model()
 except Exception as e:
-    st.error(f"モデル(best.pt)の読み込みに失敗しました。\n{e}")
+    st.error(f"モデル(best.pt)の読み込みに失敗しました。同じフォルダに配置してください。\n{e}")
     st.stop()
 
 # ==========================================
-# 2. 日時取得 ＆ データ保存関数
+# 2. 画像撮影日時の取得関数
 # ==========================================
 def get_capture_time(image, is_camera):
+    # カメラ撮影の場合は現在時刻を返す
     if is_camera:
         return datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    
+    # ファイルアップロードの場合はExifから元の撮影日時を取得
     try:
         exif = image._getexif()
         if exif is not None:
             for tag, value in exif.items():
                 decoded = ExifTags.TAGS.get(tag, tag)
                 if decoded == 'DateTimeOriginal':
+                    # Exifのフォーマットは 'YYYY:MM:DD HH:MM:SS' なので '/' に変換
                     return value.replace(':', '/', 2)
     except Exception:
         pass
+    
+    # Exif情報がない場合や取得に失敗した場合は、アップロードした現在時刻を返す
     return datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-
-def save_results_to_drive(image_array, team, capture_time, count):
-    # フォルダの準備
-    os.makedirs(RESULT_DIR, exist_ok=True)
-    images_dir = os.path.join(RESULT_DIR, "images")
-    os.makedirs(images_dir, exist_ok=True)
-
-    # 1. 画像の保存 (ファイル名: チーム番号_撮影時間_カウント数.jpg)
-    # ファイル名に使えない文字を置換 (例: 2026/08/30 10:43:27 -> 20260830_104327)
-    safe_time = capture_time.replace("/", "").replace(":", "").replace(" ", "_")
-    img_filename = f"{team}_{safe_time}_{count}.jpg"
-    img_path = os.path.join(images_dir, img_filename)
-    
-    # AI判定枠付きの画像を保存
-    Image.fromarray(image_array).save(img_path)
-
-    # 2. スプレッドシート(Excel)の更新
-    excel_path = os.path.join(RESULT_DIR, "relay_results.xlsx")
-    
-    new_data = pd.DataFrame([{
-        "チーム番号": team,
-        "周回数": count,
-        "撮影時間": capture_time,
-        "画像ファイル名": img_filename,
-        "システム送信日時": datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    }])
-
-    # 既存の履歴があれば読み込み、なければ新規作成
-    if os.path.exists(excel_path):
-        history_df = pd.read_excel(excel_path, sheet_name="History")
-        history_df = pd.concat([history_df, new_data], ignore_index=True)
-    else:
-        history_df = new_data
-
-    # Summaryシートの作成 (チーム番号ごとに最新の撮影時間を持つ行を抽出)
-    summary_df = history_df.sort_values("撮影時間").groupby("チーム番号", as_index=False).last()
-    
-    # Excelへ2つのシートを書き出し
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-        history_df.to_excel(writer, sheet_name="History", index=False)
-
 
 # ==========================================
 # 3. メインの画像処理関数（透視変換＋YOLO）
@@ -191,6 +145,8 @@ def process_image(img_array):
 # ==========================================
 st.title("🏃‍♂️ リレー周回カウンター")
 st.markdown("有孔ボードを撮影して、現在の周回数をカウントします。")
+
+# Streamlitの仕様上、コードから背面カメラの強制起動はできないため注記を添える
 st.info("💡 カメラ起動時、内側カメラになった場合はUI右上のカメラ切替ボタンで**背面カメラ**に変更してください。")
 
 camera_img = st.camera_input("カメラで撮影")
@@ -199,9 +155,11 @@ file_img = st.file_uploader("または画像をアップロード", type=['jpg',
 image_source = camera_img if camera_img else file_img
 
 if image_source is not None:
+    # 画像の読み込みと撮影日時の取得
     image = Image.open(image_source)
     img_array = np.array(image)
     
+    # どちらから入力されたかで日時の取得方法を分ける
     is_camera = (camera_img is not None)
     capture_time = get_capture_time(image, is_camera)
     
@@ -218,21 +176,20 @@ if image_source is not None:
         st.metric(label="カウントされた周回数（アメの数）", value=f"{count_or_error} 周")
         st.image(result_img, caption="AI判定結果", use_container_width=True)
         
+        # --- チーム番号の確認と手動修正エリア ---
         st.markdown("### 📝 結果の確認と送信")
         st.markdown("AIが読み取ったチーム番号が表示されています。**間違っている場合は手入力で修正**してください。")
         
         default_team_val = detected_team if detected_team else ""
         final_team_number = st.text_input("チーム番号", value=default_team_val, placeholder="例: 005")
         
-        st.write(f"📷 撮影日時: `{capture_time}`")
+        st.write(f"📷 撮影/取得日時: `{capture_time}`")
 
-        if st.button("この結果を本部に送信（保存）する", type="primary"):
+        # 送信ボタン
+        if st.button("この結果を本部に送信する", type="primary"):
             if not final_team_number.strip():
                 st.error("⚠️ チーム番号を入力してください！")
             else:
-                with st.spinner("Google Driveへ保存中..."):
-                    # Excelと画像を保存
-                    save_results_to_drive(result_img, final_team_number, capture_time, count_or_error)
-                    
-                    st.success("✅ データが正常に保存されました！")
-                    st.code(f"【送信内容】\nチーム番号 : {final_team_number}\n周回数     : {count_or_error} 周\n撮影日時   : {capture_time}")
+                # フェーズ2用: ここにスプレッドシートへの送信処理を実装
+                st.info(f"以下のデータを送信しました！（※現在はテストメッセージです）")
+                st.code(f"チーム番号 : {final_team_number}\n周回数     : {count_or_error} 周\n撮影日時   : {capture_time}")
