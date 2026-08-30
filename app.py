@@ -113,7 +113,7 @@ def upload_to_drive_and_sheets(image_array, team, capture_time, count):
         'parents': [DRIVE_FOLDER_ID]
     }
     media = MediaIoBaseUpload(img_byte_arr, mimetype='image/jpeg', resumable=True)
-    file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+    file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink', supportsAllDrives=True).execute()
     img_url = file.get('webViewLink')
 
     # --- 2. スプレッドシートの更新 ---
