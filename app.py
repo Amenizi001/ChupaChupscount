@@ -24,6 +24,14 @@ EVENT_PASSWORD = st.secrets["app_password"]
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+# --- 追加：URLパラメータによる自動ログイン処理 ---
+# URLの末尾に ?pwd=パスワード が付いているかチェック
+if "pwd" in st.query_params:
+    if st.query_params["pwd"] == EVENT_PASSWORD:
+        st.session_state.authenticated = True
+        # セキュリティと見た目のため、認証後はURLからパスワードを消去
+        st.query_params.clear() 
+# ----------------------------------------------
 
 if not st.session_state.authenticated:
     st.title("🔒 運営スタッフ用ログイン")
