@@ -1,6 +1,8 @@
 import os
 os.environ["OPENCV_HEADLESS"] = "1"  # OpenCVのHeadlessモードを強制
 import traceback  # コードの先頭あたりに追加
+import datetime
+from zoneinfo import ZoneInfo
 import streamlit as st
 import cv2
 import numpy as np
@@ -102,50 +104,70 @@ def get_capture_time(image, is_camera):
     return datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
 def upload_to_drive_and_sheets(image_array, team, capture_time, count):
+    # SecretsからIDを確実に読み込む
+    spreadsheet_id = st.secrets["SPREADSHEET_ID"]
+    drive_folder_id = st.secrets["DRIVE_FOLDER_ID"]
+
     # --- 1. Google Driveへ画像アップロード ---
     safe_time = capture_time.replace("/", "").replace(":", "").replace(" ", "_")
     img_filename = f"{team}_{safe_time}_{count}.jpg"
-    
+
     img = Image.fromarray(image_array)
     img_byte_arr = io.BytesIO()
-    img.save(img_byte_arr, format='JPEG')
+    img.save(img_byte_arr, format="JPEG")
     img_byte_arr.seek(0)
-    
+
     file_metadata = {
-        'name': img_filename,
-        'parents': [DRIVE_FOLDER_ID]
+        "name": img_filename,
+        "parents": [drive_folder_id],
     }
-    media = MediaIoBaseUpload(img_byte_arr, mimetype='image/jpeg', resumable=True)
-    file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink', supportsAllDrives=True).execute()
-    img_url = file.get('webViewLink')
+    media = MediaIoBaseUpload(
+        img_byte_arr, mimetype="image/jpeg", resumable=True
+    )
+
+    file = (
+        drive_service.files()
+        .create(
+            body=file_metadata,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+
+    img_url = file.get("webViewLink")
 
     # --- 2. スプレッドシートの更新 ---
-    sheet = gc.open_by_key(SPREADSHEET_ID)
-    system_time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    row_data = [team, count, capture_time, img_url, system_time]
-    
-    # Historyシートへ追記
+    sheet = gc.open_by_key(spreadsheet_id)
+    jst = ZoneInfo("Asia/Tokyo")
+    system_time = datetime.datetime.now(jst).strftime("%Y/%m/%d %H:%M:%S")
+    # 【1】Historyシート：今まで通り全履歴を末尾に追記
     history_ws = sheet.worksheet("History")
-    history_ws.append_row(row_data)
-    
-    # Summaryシートの更新
-    summary_ws = sheet.worksheet("Summary")
-    records = summary_ws.get_all_records()
-    
-    # 既存のチームがあるか探す
-    row_idx = None
-    for i, row in enumerate(records):
-        if str(row.get("チーム番号", "")) == str(team):
-            row_idx = i + 2 # ヘッダーが1行目なので+2
-            break
-            
-    if row_idx:
-        # 見つかった場合は上書き更新
-        summary_ws.update(f"A{row_idx}:E{row_idx}", [row_data])
-    else:
-        # 見つからなかった場合は新規追記
-        summary_ws.append_row(row_data)
+    history_row = [team, count, capture_time, img_url, system_time]
+    history_ws.append_row(history_row)
 
+    # 【2】Summaryシート：既存リストから該当チームを検索して C列・D列 を更新
+    summary_ws = sheet.worksheet("Summary")
+    
+    # A列（チーム番号）の全データを取得
+    team_list = summary_ws.col_values(1)  # 1列目 = A列
+    
+    row_idx = None
+    # チーム番号が一致する行（行番号）を探す
+    for idx, team_val in enumerate(team_list, start=1):
+        if str(team_val).strip() == str(team).strip():
+            row_idx = idx
+            break
+
+    if row_idx:
+        # 該当チームが見つかった場合：C列（個数）と D列（撮影時間）に書き込み
+        # C{row_idx}:D{row_idx} の範囲を指定して一括更新
+        summary_ws.update(f"C{row_idx}:D{row_idx}", [[count, capture_time]])
+    else:
+        # 万が一、リストに存在しないチーム番号だった場合は末尾に追加
+        summary_ws.append_row([team, "", count, capture_time])
+        
 # ==========================================
 # 4. メインの画像処理関数（透視変換＋YOLO）
 # ==========================================
