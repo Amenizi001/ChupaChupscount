@@ -4,70 +4,19 @@ import numpy as np
 from PIL import Image, ExifTags
 from ultralytics import YOLO
 import datetime
-import io
-
-# === 新たに追加する Google API 用ライブラリ ===
-import gspread
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+import os
+import pandas as pd
 
 # ==========================================
-# 0. アクセス制限（パスワード認証）
+# 0. 保存先フォルダの設定
 # ==========================================
-EVENT_PASSWORD = st.secrets["app_password"]
+# Google Driveがマウントされているパスを指定してください
+# 例: "/content/drive/MyDrive/ChupaChups_Project/result"
+RESULT_DIR = "result" 
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.title("🔒 運営スタッフ用ログイン")
-    st.markdown("このアプリはスタッフ専用です。合言葉を入力してください。")
-    
-    pwd_input = st.text_input("合言葉", type="password")
-    if st.button("ログイン"):
-        if pwd_input == EVENT_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("❌ 合言葉が間違っています")
-            
-    st.stop() # 認証失敗時はここでストップ
 
 # ==========================================
-# 1. Google API 設定 & キャッシュ
-# ==========================================
-# ★ここを書き換えてください★
-# Streamlit CloudのSecretsから安全に読み込む
-SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
-DRIVE_FOLDER_ID = st.secrets["DRIVE_FOLDER_ID"]
-
-SCOPES = [
-    '[https://www.googleapis.com/auth/spreadsheets](https://www.googleapis.com/auth/spreadsheets)',
-    '[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)'
-]
-
-@st.cache_resource
-def get_google_clients():
-    try:
-        # StreamlitのSecretsからJSON情報を読み込む
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        
-        # スプレッドシート用クライアント
-        gc = gspread.authorize(creds)
-        # ドライブ用クライアント
-        drive_service = build('drive', 'v3', credentials=creds)
-        
-        return gc, drive_service
-    except Exception as e:
-        st.error(f"Google APIの認証に失敗しました。Secretsの設定を確認してください。\n{e}")
-        st.stop()
-
-gc, drive_service = get_google_clients()
-
-# ==========================================
-# 2. ページ設定とモデルの読み込み
+# 1. ページ設定とモデルの読み込み
 # ==========================================
 st.set_page_config(page_title="チュッパチャプス周回カウンター", layout="centered")
 
@@ -82,7 +31,7 @@ except Exception as e:
     st.stop()
 
 # ==========================================
-# 3. 日時取得 ＆ Drive/Sheets送信関数
+# 2. 日時取得 ＆ データ保存関数
 # ==========================================
 def get_capture_time(image, is_camera):
     if is_camera:
@@ -98,53 +47,50 @@ def get_capture_time(image, is_camera):
         pass
     return datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
-def upload_to_drive_and_sheets(image_array, team, capture_time, count):
-    # --- 1. Google Driveへ画像アップロード ---
+def save_results_to_drive(image_array, team, capture_time, count):
+    # フォルダの準備
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    images_dir = os.path.join(RESULT_DIR, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    # 1. 画像の保存 (ファイル名: チーム番号_撮影時間_カウント数.jpg)
+    # ファイル名に使えない文字を置換 (例: 2026/08/30 10:43:27 -> 20260830_104327)
     safe_time = capture_time.replace("/", "").replace(":", "").replace(" ", "_")
     img_filename = f"{team}_{safe_time}_{count}.jpg"
+    img_path = os.path.join(images_dir, img_filename)
     
-    img = Image.fromarray(image_array)
-    img_byte_arr = io.BytesIO()
-    img.save(img_byte_arr, format='JPEG')
-    img_byte_arr.seek(0)
-    
-    file_metadata = {
-        'name': img_filename,
-        'parents': [DRIVE_FOLDER_ID]
-    }
-    media = MediaIoBaseUpload(img_byte_arr, mimetype='image/jpeg', resumable=True)
-    file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-    img_url = file.get('webViewLink')
+    # AI判定枠付きの画像を保存
+    Image.fromarray(image_array).save(img_path)
 
-    # --- 2. スプレッドシートの更新 ---
-    sheet = gc.open_by_key(SPREADSHEET_ID)
-    system_time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    row_data = [team, count, capture_time, img_url, system_time]
+    # 2. スプレッドシート(Excel)の更新
+    excel_path = os.path.join(RESULT_DIR, "relay_results.xlsx")
     
-    # Historyシートへ追記
-    history_ws = sheet.worksheet("History")
-    history_ws.append_row(row_data)
-    
-    # Summaryシートの更新
-    summary_ws = sheet.worksheet("Summary")
-    records = summary_ws.get_all_records()
-    
-    # 既存のチームがあるか探す
-    row_idx = None
-    for i, row in enumerate(records):
-        if str(row.get("チーム番号", "")) == str(team):
-            row_idx = i + 2 # ヘッダーが1行目なので+2
-            break
-            
-    if row_idx:
-        # 見つかった場合は上書き更新
-        summary_ws.update(f"A{row_idx}:E{row_idx}", [row_data])
+    new_data = pd.DataFrame([{
+        "チーム番号": team,
+        "周回数": count,
+        "撮影時間": capture_time,
+        "画像ファイル名": img_filename,
+        "システム送信日時": datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    }])
+
+    # 既存の履歴があれば読み込み、なければ新規作成
+    if os.path.exists(excel_path):
+        history_df = pd.read_excel(excel_path, sheet_name="History")
+        history_df = pd.concat([history_df, new_data], ignore_index=True)
     else:
-        # 見つからなかった場合は新規追記
-        summary_ws.append_row(row_data)
+        history_df = new_data
+
+    # Summaryシートの作成 (チーム番号ごとに最新の撮影時間を持つ行を抽出)
+    summary_df = history_df.sort_values("撮影時間").groupby("チーム番号", as_index=False).last()
+    
+    # Excelへ2つのシートを書き出し
+    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        history_df.to_excel(writer, sheet_name="History", index=False)
+
 
 # ==========================================
-# 4. メインの画像処理関数（透視変換＋YOLO）
+# 3. メインの画像処理関数（透視変換＋YOLO）
 # ==========================================
 def process_image(img_array):
     img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
@@ -181,6 +127,7 @@ def process_image(img_array):
     ], dtype="float32")
     
     req_ids = [1, 2, 3, 0]
+    
     marker_dict = {}
     team_ids = [] 
 
@@ -240,7 +187,7 @@ def process_image(img_array):
     return vis_img_rgb, valid_count, detected_team_str
 
 # ==========================================
-# 5. アプリのUI表示
+# 4. アプリのUI表示
 # ==========================================
 st.title("🏃‍♂️ リレー周回カウンター")
 st.markdown("有孔ボードを撮影して、現在の周回数をカウントします。")
@@ -267,6 +214,7 @@ if image_source is not None:
              st.info(f"💡 (参考) チーム番号マーカー [{detected_team}] は見えています。四隅のマーカーをすべて枠内に収めてください。")
     else:
         st.success("✅ 判定完了！")
+        
         st.metric(label="カウントされた周回数（アメの数）", value=f"{count_or_error} 周")
         st.image(result_img, caption="AI判定結果", use_container_width=True)
         
@@ -275,16 +223,16 @@ if image_source is not None:
         
         default_team_val = detected_team if detected_team else ""
         final_team_number = st.text_input("チーム番号", value=default_team_val, placeholder="例: 005")
+        
         st.write(f"📷 撮影日時: `{capture_time}`")
 
-        if st.button("この結果を本部に送信する", type="primary"):
+        if st.button("この結果を本部に送信（保存）する", type="primary"):
             if not final_team_number.strip():
                 st.error("⚠️ チーム番号を入力してください！")
             else:
-                with st.spinner("Googleクラウドへ安全に送信中..."):
-                    try:
-                        upload_to_drive_and_sheets(result_img, final_team_number, capture_time, count_or_error)
-                        st.success("✅ 本部へのデータ送信が完了しました！")
-                        st.code(f"【送信内容】\nチーム番号 : {final_team_number}\n周回数     : {count_or_error} 周\n撮影日時   : {capture_time}")
-                    except Exception as e:
-                        st.error(f"送信中にエラーが発生しました: {e}")
+                with st.spinner("Google Driveへ保存中..."):
+                    # Excelと画像を保存
+                    save_results_to_drive(result_img, final_team_number, capture_time, count_or_error)
+                    
+                    st.success("✅ データが正常に保存されました！")
+                    st.code(f"【送信内容】\nチーム番号 : {final_team_number}\n周回数     : {count_or_error} 周\n撮影日時   : {capture_time}")
