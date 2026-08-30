@@ -1,3 +1,5 @@
+import os
+os.environ["OPENCV_HEADLESS"] = "1"  # OpenCVのHeadlessモードを強制
 import streamlit as st
 import cv2
 import numpy as np
