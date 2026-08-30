@@ -1,5 +1,6 @@
 import os
 os.environ["OPENCV_HEADLESS"] = "1"  # OpenCVのHeadlessモードを強制
+import traceback  # コードの先頭あたりに追加
 import streamlit as st
 import cv2
 import numpy as np
@@ -290,3 +291,4 @@ if image_source is not None:
                         st.code(f"【送信内容】\nチーム番号 : {final_team_number}\n周回数     : {count_or_error} 周\n撮影日時   : {capture_time}")
                     except Exception as e:
                         st.error(f"送信中にエラーが発生しました: {e}")
+                        st.code(traceback.format_exc())
