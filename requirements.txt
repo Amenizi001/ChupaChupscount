@@ -1,8 +1,8 @@
 streamlit
-opencv-python-headless
 numpy
 Pillow
-ultralytics
 gspread
 google-auth
 google-api-python-client
+opencv-python-headless>=4.8.0
+ultralytics>=8.0.0
