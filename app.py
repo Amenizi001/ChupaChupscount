@@ -268,7 +268,7 @@ if image_source is not None:
     else:
         st.success("✅ 判定完了！")
         st.metric(label="カウントされた周回数（アメの数）", value=f"{count_or_error} 周")
-        st.image(result_img, caption="AI判定結果", use_container_width=True)
+        st.image(result_img, caption="AI判定結果", width="stretch")
         
         st.markdown("### 📝 結果の確認と送信")
         st.markdown("AIが読み取ったチーム番号が表示されています。**間違っている場合は手入力で修正**してください。")
