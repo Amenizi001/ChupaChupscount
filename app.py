@@ -43,8 +43,8 @@ SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 DRIVE_FOLDER_ID = st.secrets["DRIVE_FOLDER_ID"]
 
 SCOPES = [
-    '[https://www.googleapis.com/auth/spreadsheets](https://www.googleapis.com/auth/spreadsheets)',
-    '[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)'
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
 ]
 
 @st.cache_resource
