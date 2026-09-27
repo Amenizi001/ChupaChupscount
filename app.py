@@ -148,10 +148,10 @@ def upload_to_drive_and_sheets(image_array, team, capture_time, final_count, is_
 
     # 【1】Historyシート：末尾に追記
     history_ws = sheet.worksheet("History")
-    history_row = [team, final_count, capture_time, img_url, system_time, team_name, g_val]
+    history_row = [team, final_count, capture_time, img_url, system_time, g_val]
     history_ws.append_row(history_row)
 
-    # 【2】Summaryシート：該当チームを検索して更新
+# 【2】Summaryシート：該当チームを検索して更新
     summary_ws = sheet.worksheet("Summary")
     team_list = summary_ws.col_values(1)
     
@@ -165,8 +165,9 @@ def upload_to_drive_and_sheets(image_array, team, capture_time, final_count, is_
         # C列・D列を更新
         summary_ws.update(f"C{row_idx}:D{row_idx}", [[final_count, capture_time]])
     else:
-        # 見つからなかった場合は新規行追加
-        summary_ws.append_row([team, "", final_count, capture_time, system_time, team_name, g_val])
+        # 見つからなかった場合はA列の末尾行を計算して、A〜D列にのみ新規追加
+        new_row = len(team_list) + 1
+        summary_ws.update(f"A{new_row}:D{new_row}", [[team, "", final_count, capture_time]])
         
 # ==========================================
 # 4. メインの画像処理関数（透視変換＋YOLO）
