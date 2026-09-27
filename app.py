@@ -273,7 +273,7 @@ def process_image(img_array):
 # 5. アプリのUI表示
 # ==========================================
 # タイトルをh3タグ相当に縮小
-st.markdown("### 🏃‍♂️ リレー周回カウンター")
+st.markdown("### 🏃‍♂️ 周回カウンター")
 st.info("💡 カメラ起動時、内側カメラになった場合はUI右上のカメラ切替ボタンで**背面カメラ**に変更してください。")
 
 camera_img = st.camera_input("カメラで撮影")
@@ -304,7 +304,7 @@ if image_source is not None:
         st.image(result_img, caption="読み取り結果", use_container_width=True)
         
         st.markdown("### 📝 結果の確認と送信")
-        st.markdown("チーム番号が間違っている場合は手入力で修正してください。半角数字**")
+        st.markdown("チーム番号が間違っている場合は手入力で修正してください。半角数字")
         
         default_team_val = detected_team if detected_team else ""
         
@@ -323,8 +323,8 @@ if image_source is not None:
         else:
             display_value = f"{final_count} 周"
 
-        st.metric(label="記録される周回数", value=display_value)
-        
+        st.caption("記録される周回数")
+        st.markdown(f"### {display_value}")
 
         if st.button("この結果を本部に送信する", type="primary"):
             if not input_team_no.strip():
