@@ -274,18 +274,9 @@ def process_image(img_array):
 # ==========================================
 # タイトルをh3タグ相当に縮小
 st.markdown("### 🏃‍♂️ 周回カウンター")
-st.info("💡 切替ボタン[⇔]で**背面カメラ**に変更できます。")
+# st.info("💡 切替ボタン[⇔]で**背面カメラ**に変更できます。")
 
 camera_img = st.camera_input("カメラで撮影")
-
-# ▼追加：画像判定結果を表示する場所（コンテナ）をカメラの下に確保しておく
-result_container = st.container()
-
-# 最下部に説明文を控えめに表示
-st.markdown("---")
-st.caption("ChromeまたはSafariを使用して下さい。飴のボードを撮影して、現在の周回数をカウントします。")
-
-# ▼変更：画像アップローダーを説明文の下（一番最後）に移動
 file_img = st.file_uploader("または画像をアップロード", type=['jpg', 'jpeg', 'png'])
 
 image_source = camera_img if camera_img else file_img
@@ -343,8 +334,11 @@ if image_source is not None:
                     try:
                         upload_to_drive_and_sheets(result_img, input_team_no, capture_time, final_count, is_box_completed, "")
                         st.success("✅ 本部へのデータ送信が完了しました！")
-                        st.code(f"【送信内容】\nチーム番号 : {input_team_no}\n周回数     : {final_count} 周\n1箱完成    : {'はい(+56)' if is_box_completed else 'いいえ'}\n撮影日時   : {capture_time}")
+                        st.code(f"【送信内容】\nチーム番号 : {input_team_no}\n周回数     : {final_count} 周\n1箱完成    : {'はい(+54)' if is_box_completed else 'いいえ'}\n撮影日時   : {capture_time}")
                     except Exception as e:
                         st.error(f"送信中にエラーが発生しました: {e}")
                         st.code(traceback.format_exc())
 
+# 最下部に説明文を控えめに表示
+st.markdown("---")
+st.caption("ChromeまたはSafariを使用して下さい。飴のボードを撮影して、現在の周回数をカウントします。")
