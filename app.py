@@ -1,6 +1,6 @@
 import os
 os.environ["OPENCV_HEADLESS"] = "1"  # OpenCVのHeadlessモードを強制
-import traceback  # コードの先頭あたりに追加
+import traceback
 import datetime
 from zoneinfo import ZoneInfo
 import streamlit as st
@@ -8,10 +8,9 @@ import cv2
 import numpy as np
 from PIL import Image, ExifTags
 from ultralytics import YOLO
-import datetime
 import io
 
-# === 新たに追加する Google API 用ライブラリ ===
+# === Google API 用ライブラリ ===
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -24,14 +23,12 @@ EVENT_PASSWORD = st.secrets["app_password"]
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
-# --- 追加：URLパラメータによる自動ログイン処理 ---
-# URLの末尾に ?pwd=パスワード が付いているかチェック
+
+# URLパラメータによる自動ログイン処理
 if "pwd" in st.query_params:
     if st.query_params["pwd"] == EVENT_PASSWORD:
         st.session_state.authenticated = True
-        # セキュリティと見た目のため、認証後はURLからパスワードを消去
         st.query_params.clear() 
-# ----------------------------------------------
 
 if not st.session_state.authenticated:
     st.title("🔒 運営スタッフ用ログイン")
@@ -50,8 +47,6 @@ if not st.session_state.authenticated:
 # ==========================================
 # 1. Google API 設定 & キャッシュ
 # ==========================================
-# ★ここを書き換えてください★
-# Streamlit CloudのSecretsから安全に読み込む
 SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 DRIVE_FOLDER_ID = st.secrets["DRIVE_FOLDER_ID"]
 
@@ -63,13 +58,10 @@ SCOPES = [
 @st.cache_resource
 def get_google_clients():
     try:
-        # StreamlitのSecretsからJSON情報を読み込む
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         
-        # スプレッドシート用クライアント
         gc = gspread.authorize(creds)
-        # ドライブ用クライアント
         drive_service = build('drive', 'v3', credentials=creds)
         
         return gc, drive_service
@@ -112,14 +104,14 @@ def get_capture_time(image, is_camera):
         pass
     return "データなし"
 
-def upload_to_drive_and_sheets(image_array, team, capture_time, count):
-    # SecretsからIDを確実に読み込む
+# 【修正2】送信データに final_count(最終周回数) と is_box_completed(箱完成フラグ) と team_name(チーム名) を追加
+def upload_to_drive_and_sheets(image_array, team, capture_time, final_count, is_box_completed, team_name):
     spreadsheet_id = st.secrets["SPREADSHEET_ID"]
     drive_folder_id = st.secrets["DRIVE_FOLDER_ID"]
 
     # --- 1. Google Driveへ画像アップロード ---
     safe_time = capture_time.replace("/", "").replace(":", "").replace(" ", "_")
-    img_filename = f"{team}_{safe_time}_{count}.jpg"
+    img_filename = f"{team}_{safe_time}_{final_count}.jpg"
 
     img = Image.fromarray(image_array)
     img_byte_arr = io.BytesIO()
@@ -151,36 +143,39 @@ def upload_to_drive_and_sheets(image_array, team, capture_time, count):
     sheet = gc.open_by_key(spreadsheet_id)
     jst = ZoneInfo("Asia/Tokyo")
     system_time = datetime.datetime.now(jst).strftime("%Y/%m/%d %H:%M:%S")
-    # 【1】Historyシート：今まで通り全履歴を末尾に追記
+    
+    # G列（1箱完成）の値
+    g_val = 1 if is_box_completed else ""
+
+    # 【1】Historyシート：末尾に追記（フォーマットに合わせる）
+    # 想定列: A:No, B:周回数, C:計測時間, D:写真URL, E:送信時間(システム時間), F:チーム名, G:1箱完成
     history_ws = sheet.worksheet("History")
-    history_row = [team, count, capture_time, img_url, system_time]
+    history_row = [team, final_count, capture_time, img_url, system_time, team_name, g_val]
     history_ws.append_row(history_row)
 
-    # 【2】Summaryシート：既存リストから該当チームを検索して C列・D列 を更新
+    # 【2】Summaryシート：該当チームを検索して更新（Summaryシートの構成に合わせて適宜調整してください。ここではHistoryに準拠します）
+    # ※もしSummaryシートが別の列構成の場合は、ここのロジックを変更してください。
     summary_ws = sheet.worksheet("Summary")
-    
-    # A列（チーム番号）の全データを取得
-    team_list = summary_ws.col_values(1)  # 1列目 = A列
+    team_list = summary_ws.col_values(1)
     
     row_idx = None
-    # チーム番号が一致する行（行番号）を探す
     for idx, team_val in enumerate(team_list, start=1):
         if str(team_val).strip() == str(team).strip():
             row_idx = idx
             break
 
     if row_idx:
-        # 該当チームが見つかった場合：C列（個数）と D列（撮影時間）に書き込み
-        # C{row_idx}:D{row_idx} の範囲を指定して一括更新
-        summary_ws.update(f"C{row_idx}:D{row_idx}", [[count, capture_time]])
+        # C列・D列を更新（既存ロジック） + F列(チーム名)とG列(箱完成)も更新する例
+        summary_ws.update(f"C{row_idx}:D{row_idx}", [[final_count, capture_time]])
     else:
-        # 万が一、リストに存在しないチーム番号だった場合は末尾に追加
-        summary_ws.append_row([team, "", count, capture_time])
+        # 見つからなかった場合は新規行追加
+        summary_ws.append_row([team, "", final_count, capture_time, system_time, team_name, g_val])
         
 # ==========================================
 # 4. メインの画像処理関数（透視変換＋YOLO）
 # ==========================================
-def process_image(img_array):
+# 【修正1】画像にテキストを描画するため、チーム番号を引数に追加
+def process_image(img_array, display_team_str):
     img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
     
     h, w = img.shape[:2]
@@ -270,6 +265,11 @@ def process_image(img_array):
         cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
         cv2.putText(vis_img, f"{conf:.2f}", (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
+    # 【修正1】画像内に大きくチームNoとカウント数を赤字で描画
+    team_text = display_team_str if display_team_str else "Unknown"
+    text_info = f"Team:{team_text} Count:{valid_count}"
+    cv2.putText(vis_img, text_info, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+
     vis_img_rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)
     return vis_img_rgb, valid_count, detected_team_str
 
@@ -277,8 +277,14 @@ def process_image(img_array):
 # 5. アプリのUI表示
 # ==========================================
 st.title("🏃‍♂️ リレー周回カウンター")
-st.markdown("ChromeまたはSafariを使用して下さい。飴のボードを撮影して、現在の周回数をカウントします。")
+st.markdown("ChromeまたはSafariを使用して下さい。現在の周回数をカウントします。四隅のマーカーが映るようになるべく真上から撮影して下さい。飴は奥まで差し込んで下さい。余分な飴は撮影前に台の上から退けてください。")
 st.info("💡 カメラ起動時、内側カメラになった場合はUI右上のカメラ切替ボタンで**背面カメラ**に変更してください。")
+
+col1, col2 = st.columns(2)
+with col1:
+    input_team_no = st.text_input("チーム番号(手動入力可)", placeholder="例: 005")
+with col2:
+    input_team_name = st.text_input("チーム名", placeholder="例: の")
 
 camera_img = st.camera_input("カメラで撮影")
 file_img = st.file_uploader("または画像をアップロード", type=['jpg', 'jpeg', 'png'])
@@ -286,20 +292,28 @@ file_img = st.file_uploader("または画像をアップロード", type=['jpg',
 image_source = camera_img if camera_img else file_img
 
 if image_source is not None:
-    # 新しい画像がセットされたときだけ撮影時間を取得し、記憶させる
     if "current_file_id" not in st.session_state or st.session_state.current_file_id != image_source.file_id:
         st.session_state.current_file_id = image_source.file_id
         image = Image.open(image_source)
         is_camera = (camera_img is not None)
         st.session_state.capture_time = get_capture_time(image, is_camera)
     
-    # 記憶しておいた時間を呼び出す
     capture_time = st.session_state.capture_time
     image = Image.open(image_source)
     img_array = np.array(image)
     
     with st.spinner("AIが周回数とチーム番号を判定中..."):
-        result_img, count_or_error, detected_team = process_image(img_array)
+        # UIで入力された番号があればそれを優先表示、なければAI検出結果を使用するため None を渡す
+        display_team = input_team_no if input_team_no else None
+        
+        # もし入力が空の状態でAI判定を走らせるため、一度仮で回す（描画のため）
+        # 少し非効率ですが確実です。
+        _, _, temp_detected_team = process_image(img_array, display_team)
+        
+        # 最終的に画像に描画するテキストの決定
+        final_display_team = input_team_no if input_team_no else temp_detected_team
+        
+        result_img, count_or_error, detected_team = process_image(img_array, final_display_team)
         
     if result_img is None:
         st.warning(count_or_error)
@@ -307,25 +321,33 @@ if image_source is not None:
              st.info(f"💡 (参考) チーム番号マーカー [{detected_team}] は見えています。四隅のマーカーをすべて枠内に収めてください。")
     else:
         st.success("✅ 判定完了！")
-        st.metric(label="カウントされた周回数（アメの数）", value=f"{count_or_error} 周")
-        st.image(result_img, caption="AI判定結果", width="stretch")
+        st.image(result_img, caption="AI判定結果", use_container_width=True)
         
         st.markdown("### 📝 結果の確認と送信")
-        st.markdown("AIが読み取ったチーム番号が表示されています。**間違っている場合は手入力で修正**してください。")
+        st.markdown("AIが読み取ったチーム番号がある場合は参考にしてください。")
         
+        # AIが読み取った番号が入力欄に無ければ初期値としてサジェスト
         default_team_val = detected_team if detected_team else ""
-        final_team_number = st.text_input("チーム番号", value=default_team_val, placeholder="例: 005")
+        if not input_team_no:
+            st.info(f"AI読取番号: {default_team_val} （上部の入力欄に入力してください）")
+
         st.write(f"📷 撮影日時: `{capture_time}`")
 
+        # 【修正2】1箱完成済みチェックボックス
+        is_box_completed = st.checkbox("📦 1箱完成済み（+56周加算）")
+        final_count = count_or_error + 56 if is_box_completed else count_or_error
+        
+        st.metric(label="スプレッドシートに記録される最終周回数", value=f"{final_count} 周")
+
         if st.button("この結果を本部に送信する", type="primary"):
-            if not final_team_number.strip():
-                st.error("⚠️ チーム番号を入力してください！")
+            if not input_team_no.strip():
+                st.error("⚠️ 上部の入力欄にチーム番号を入力してください！")
             else:
                 with st.spinner("Googleクラウドへ安全に送信中..."):
                     try:
-                        upload_to_drive_and_sheets(result_img, final_team_number, capture_time, count_or_error)
+                        upload_to_drive_and_sheets(result_img, input_team_no, capture_time, final_count, is_box_completed, input_team_name)
                         st.success("✅ 本部へのデータ送信が完了しました！")
-                        st.code(f"【送信内容】\nチーム番号 : {final_team_number}\n周回数     : {count_or_error} 周\n撮影日時   : {capture_time}")
+                        st.code(f"【送信内容】\nチーム番号 : {input_team_no}\nチーム名   : {input_team_name}\n周回数     : {final_count} 周\n1箱完成    : {'はい(+56)' if is_box_completed else 'いいえ'}\n撮影日時   : {capture_time}")
                     except Exception as e:
                         st.error(f"送信中にエラーが発生しました: {e}")
                         st.code(traceback.format_exc())
