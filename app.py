@@ -292,7 +292,7 @@ if image_source is not None:
     image = Image.open(image_source)
     img_array = np.array(image)
     
-    with st.spinner("AIが周回数とチーム番号を判定中..."):
+    with st.spinner("周回数とチーム番号を読み取り中..."):
         result_img, count_or_error, detected_team = process_image(img_array)
         
     if result_img is None:
@@ -301,10 +301,10 @@ if image_source is not None:
              st.info(f"💡 (参考) チーム番号マーカー [{detected_team}] は見えています。四隅のマーカーをすべて枠内に収めてください。")
     else:
         st.success("✅ 判定完了！")
-        st.image(result_img, caption="AI判定結果", use_container_width=True)
+        st.image(result_img, caption="読み取り結果", use_container_width=True)
         
         st.markdown("### 📝 結果の確認と送信")
-        st.markdown("AIが読み取ったチーム番号がある場合は自動で入力されています。**間違っている場合は修正してください。**")
+        st.markdown("チーム番号が間違っている場合は手入力で修正してください。半角数字**")
         
         default_team_val = detected_team if detected_team else ""
         
@@ -314,16 +314,23 @@ if image_source is not None:
         st.write(f"📷 撮影日時: `{capture_time}`")
 
         # 1箱完成済みチェックボックス
-        is_box_completed = st.checkbox("📦 1箱完成済み（+56周加算）")
-        final_count = count_or_error + 56 if is_box_completed else count_or_error
+        is_box_completed = st.checkbox("📦 1箱完成済み（+54周加算）")
+        final_count = count_or_error + 54 if is_box_completed else count_or_error
         
-        st.metric(label="スプレッドシートに記録される最終周回数", value=f"{final_count} 周")
+        # チェックボックスの状態によって表示テキストを変更
+        if is_box_completed:
+            display_value = f"合計{final_count}周（{count_or_error} ＋ 54周加算）"
+        else:
+            display_value = f"{final_count} 周"
+
+        st.metric(label="記録される周回数", value=display_value)
+        
 
         if st.button("この結果を本部に送信する", type="primary"):
             if not input_team_no.strip():
                 st.error("⚠️ チーム番号を入力してください！")
             else:
-                with st.spinner("Googleクラウドへ安全に送信中..."):
+                with st.spinner("Googleクラウドに送信中..."):
                     try:
                         upload_to_drive_and_sheets(result_img, input_team_no, capture_time, final_count, is_box_completed, "")
                         st.success("✅ 本部へのデータ送信が完了しました！")
