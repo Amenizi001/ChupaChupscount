@@ -274,9 +274,18 @@ def process_image(img_array):
 # ==========================================
 # タイトルをh3タグ相当に縮小
 st.markdown("### 🏃‍♂️ 周回カウンター")
-st.info("💡 カメラ起動時、内側カメラになった場合はUI右上のカメラ切替ボタンで**背面カメラ**に変更してください。")
+st.info("💡 切替ボタン[⇔]で**背面カメラ**に変更できます。")
 
 camera_img = st.camera_input("カメラで撮影")
+
+# ▼追加：画像判定結果を表示する場所（コンテナ）をカメラの下に確保しておく
+result_container = st.container()
+
+# 最下部に説明文を控えめに表示
+st.markdown("---")
+st.caption("ChromeまたはSafariを使用して下さい。飴のボードを撮影して、現在の周回数をカウントします。")
+
+# ▼変更：画像アップローダーを説明文の下（一番最後）に移動
 file_img = st.file_uploader("または画像をアップロード", type=['jpg', 'jpeg', 'png'])
 
 image_source = camera_img if camera_img else file_img
@@ -319,7 +328,7 @@ if image_source is not None:
         
         # チェックボックスの状態によって表示テキストを変更
         if is_box_completed:
-            display_value = f"合計{final_count}周（{count_or_error} ＋ 54周加算）"
+            display_value = f"合計{final_count}周（{count_or_error} ＋ 加算54）"
         else:
             display_value = f"{final_count} 周"
 
@@ -339,6 +348,3 @@ if image_source is not None:
                         st.error(f"送信中にエラーが発生しました: {e}")
                         st.code(traceback.format_exc())
 
-# 最下部に説明文を控えめに表示
-st.markdown("---")
-st.caption("ChromeまたはSafariを使用して下さい。飴のボードを撮影して、現在の周回数をカウントします。")
