@@ -174,50 +174,75 @@ def upload_to_drive_and_sheets(image_array, team, capture_time, final_count, is_
 # ==========================================
 def process_image(img_array):
     img = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    
+
     h, w = img.shape[:2]
     if max(h, w) > 2400:
         resize_scale = 2400 / max(h, w)
         img = cv2.resize(img, (int(w * resize_scale), int(h * resize_scale)))
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
+
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_1000)
     parameters = cv2.aruco.DetectorParameters()
+
+    # サブピクセル精度の角検出を有効化（位置精度向上）
+    parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+
     if hasattr(cv2.aruco, "ArucoDetector"):
         detector = cv2.aruco.ArucoDetector(dictionary, parameters)
         corners, ids, _ = detector.detectMarkers(gray)
     else:
-        corners, ids, _ = cv2.aruco.detectMarkers(gray, dictionary, parameters=parameters)
+        corners, ids, _ = cv2.aruco.detectMarkers(
+            gray, dictionary, parameters=parameters
+        )
 
     if ids is None:
-        return None, "❌ マーカーが検出されませんでした。明るい場所で、四隅が写るように撮影してください。", None
+        return (
+            None,
+            "❌ マーカーが検出されませんでした。明るい場所で、四隅が写るように撮影してください。",
+            None,
+        )
 
-    marker_w_mm, marker_h_mm = 185, 315
+    marker_w_mm, marker_h_mm = 196, 333
     scale, padding_mm = 2, 50
     dst_w = int((marker_w_mm + padding_mm * 2) * scale)
     dst_h = int((marker_h_mm + padding_mm * 2) * scale)
     offset_px = int(padding_mm * scale)
 
-    dst_pts = np.array([
-        [offset_px, offset_px],
-        [offset_px + marker_w_mm * scale, offset_px],
-        [offset_px + marker_w_mm * scale, offset_px + marker_h_mm * scale],
-        [offset_px, offset_px + marker_h_mm * scale]
-    ], dtype="float32")
-    
+    dst_pts = np.array(
+        [
+            [offset_px, offset_px],
+            [offset_px + marker_w_mm * scale, offset_px],
+            [offset_px + marker_w_mm * scale, offset_px + marker_h_mm * scale],
+            [offset_px, offset_px + marker_h_mm * scale],
+        ],
+        dtype="float32",
+    )
+
     req_ids = [1, 2, 3, 0]
     marker_dict = {}
-    team_ids = [] 
+    team_ids = []
+
+    # 直線L1(p1-p2)とL2(p3-p4)の交点を求める関数（対角線の交点＝真の中心）
+    def get_intersection(p1, p2, p3, p4):
+        s1 = np.array(p2) - np.array(p1)
+        s2 = np.array(p4) - np.array(p3)
+        div = -s2[0] * s1[1] + s1[0] * s2[1]
+        if abs(div) < 1e-6:
+            return np.mean([p1, p2, p3, p4], axis=0)
+        s = (-s1[1] * (p1[0] - p3[0]) + s1[0] * (p1[1] - p3[1])) / div
+        return p3 + s * s2
 
     for id_val, c in zip(ids.flatten(), corners):
         id_val = int(id_val)
         if id_val in req_ids:
-            cx, cy = float(np.mean(c[0, :, 0])), float(np.mean(c[0, :, 1]))
-            marker_dict[id_val] = (cx, cy)
+            pts = c[0]
+            # 対角線(左上-右下, 右上-左下)の交点をマーカーの真の中心とする
+            center = get_intersection(pts[0], pts[2], pts[1], pts[3])
+            marker_dict[id_val] = (float(center[0]), float(center[1]))
         else:
             team_ids.append(id_val)
-            
+
     team_ids = sorted(list(set(team_ids)))
     if team_ids:
         detected_team_str = "_".join([f"{tid:03d}" for tid in team_ids])
@@ -227,49 +252,93 @@ def process_image(img_array):
     present_ids = [k for k in req_ids if k in marker_dict]
     if len(present_ids) == 3:
         missing = (set(req_ids) - set(present_ids)).pop()
-        if missing == 2: marker_dict[2] = (marker_dict[1][0] + marker_dict[3][0] - marker_dict[0][0], marker_dict[1][1] + marker_dict[3][1] - marker_dict[0][1])
-        elif missing == 3: marker_dict[3] = (marker_dict[2][0] + marker_dict[0][0] - marker_dict[1][0], marker_dict[2][1] + marker_dict[0][1] - marker_dict[1][1])
-        elif missing == 1: marker_dict[1] = (marker_dict[0][0] + marker_dict[2][0] - marker_dict[3][0], marker_dict[0][1] + marker_dict[2][1] - marker_dict[3][1])
-        elif missing == 0: marker_dict[0] = (marker_dict[1][0] + marker_dict[3][0] - marker_dict[2][0], marker_dict[1][1] + marker_dict[3][1] - marker_dict[2][1])
-                              
+        if missing == 2:
+            marker_dict[2] = (
+                marker_dict[1][0] + marker_dict[3][0] - marker_dict[0][0],
+                marker_dict[1][1] + marker_dict[3][1] - marker_dict[0][1],
+            )
+        elif missing == 3:
+            marker_dict[3] = (
+                marker_dict[2][0] + marker_dict[0][0] - marker_dict[1][0],
+                marker_dict[2][1] + marker_dict[0][1] - marker_dict[1][1],
+            )
+        elif missing == 1:
+            marker_dict[1] = (
+                marker_dict[0][0] + marker_dict[2][0] - marker_dict[3][0],
+                marker_dict[0][1] + marker_dict[2][1] - marker_dict[3][1],
+            )
+        elif missing == 0:
+            marker_dict[0] = (
+                marker_dict[1][0] + marker_dict[3][0] - marker_dict[2][0],
+                marker_dict[1][1] + marker_dict[3][1] - marker_dict[2][1],
+            )
+
     if not all(k in marker_dict for k in req_ids):
-        return None, "❌ マーカーが3つ以上確認できませんでした。遮蔽物がないか確認してください。", detected_team_str
-        
-    src_pts = np.array([marker_dict[1], marker_dict[2], marker_dict[3], marker_dict[0]], dtype="float32")
+        return (
+            None,
+            "❌ マーカーが3つ以上確認できませんでした。遮蔽物がないか確認してください。",
+            detected_team_str,
+        )
+
+    src_pts = np.array(
+        [marker_dict[1], marker_dict[2], marker_dict[3], marker_dict[0]],
+        dtype="float32",
+    )
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     warped = cv2.warpPerspective(img, M, (dst_w, dst_h))
-    
+
     results = model.predict(source=warped, conf=0.70, iou=0.45, verbose=False)
     vis_img = warped.copy()
-    
+
     valid_x_min, valid_x_max = offset_px, offset_px + marker_w_mm * scale
     valid_y_min, valid_y_max = offset_px, offset_px + marker_h_mm * scale
-    cv2.rectangle(vis_img, (valid_x_min, valid_y_min), (valid_x_max, valid_y_max), (255, 0, 0), 2)
-    
+    cv2.rectangle(
+        vis_img,
+        (valid_x_min, valid_y_min),
+        (valid_x_max, valid_y_max),
+        (255, 0, 0),
+        2,
+    )
+
     valid_count = 0
     for r in results[0].boxes:
         box = r.xyxy[0].cpu().numpy().astype(int)
         conf = float(r.conf[0].cpu().numpy())
         x1, y1, x2, y2 = box
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-        
+
         if valid_x_min <= cx <= valid_x_max and valid_y_min <= cy <= valid_y_max:
             color = (0, 255, 0)
             valid_count += 1
         else:
             color = (0, 165, 255)
-            
+
         cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(vis_img, f"{conf:.2f}", (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(
+            vis_img,
+            f"{conf:.2f}",
+            (x1, max(15, y1 - 5)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            2,
+        )
 
     # 画像内に大きくチームNoとカウント数を赤字で描画
     team_text = detected_team_str if detected_team_str else "Unknown"
     text_info = f"Team:{team_text} Count:{valid_count}"
-    cv2.putText(vis_img, text_info, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+    cv2.putText(
+        vis_img,
+        text_info,
+        (20, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.2,
+        (0, 0, 255),
+        3,
+    )
 
     vis_img_rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)
     return vis_img_rgb, valid_count, detected_team_str
-
 # ==========================================
 # 5. アプリのUI表示
 # ==========================================
