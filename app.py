@@ -182,7 +182,7 @@ def process_image(img_array):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_1000)
+    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
     parameters = cv2.aruco.DetectorParameters()
 
     # サブピクセル精度の角検出を有効化（位置精度向上）
